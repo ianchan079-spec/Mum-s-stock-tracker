@@ -1,5 +1,8 @@
 streamlit
-streamlit-autorefresh
-yfinance==0.2.40
 pandas
+yfinance
+requests
+streamlit-searchbox
 st-gsheets-connection
+streamlit-autorefresh
+numpy<2
