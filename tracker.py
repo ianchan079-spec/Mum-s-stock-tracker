@@ -115,9 +115,9 @@ if not df.empty:
         # 1. Fetch Company Name (New)
         name = get_company_name(ticker)
 
-            try:
+        try:
                 live_price = yf.Ticker(ticker).fast_info['last_price']
-            except:
+        except:
                 live_price = avg_cost
             
             cur_val = net_qty * live_price
