@@ -3,112 +3,87 @@ from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 import yfinance as yf
 from streamlit_autorefresh import st_autorefresh
-import requests
-from streamlit_searchbox import st_searchbox
-from datetime import date
-from typing import List
 
-# --- 1. HEARTBEAT & PAGE CONFIG ---
-# Wakes the app up every 60 seconds to update live prices automatically
-st_autorefresh(interval=60000, key="pricerefresh") 
+# --- 1. HEARTBEAT ---
+st_autorefresh(interval=60000, key="pricerefresh")
 
-st.set_page_config(page_title="Mum's Stock Tracker", layout="wide")
-st.title("📈 Live Portfolio Dashboard")
+st.set_page_config(page_title="Mum's Portfolio", layout="wide")
+st.title("📈 Portfolio Dashboard & Performance")
 
-# --- 2. CLOUD DATABASE CONNECTION ---
-# Connects using the URL and Service Account in your Streamlit Secrets
+# --- 2. CONNECTION ---
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 def load_data():
-    try:
-        # ttl=0 ensures we don't show "old" data during the auto-refresh
-        return conn.read(ttl=0)
-    except Exception:
-        return pd.DataFrame(columns=["Date", "Ticker", "Type", "Qty", "Price", "Platform"])
+    return conn.read(ttl=0)
 
-# --- 3. SEARCH & INPUT TOOLS ---
-def search_stocks(search_term: str) -> List[str]:
-    """Provides the autocomplete dropdown for the sidebar."""
-    if not search_term or len(search_term) < 2:
-        return []
-    url = f"https://query2.finance.yahoo.com/v1/finance/search?q={search_term}&quotes_count=5"
-    try:
-        res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}).json()
-        return [f"{q['symbol']} ({q.get('longname', 'Unknown')})" for q in res.get('quotes', [])]
-    except Exception:
-        return []
-
-# --- 4. SIDEBAR: KEYING IN TRADES ---
-st.sidebar.header("➕ Add New Trade")
-with st.sidebar.form("input_form", clear_on_submit=True):
-    selected_result = st_searchbox(search_stocks, key="ticker_search", label="Search Company/Ticker")
-    t_date = st.date_input("Trade Date", date.today())
-    t_type = st.selectbox("Type", ["Buy", "Sell"])
-    t_platform = st.text_input("Platform", placeholder="e.g. Robinhood")
-    t_qty = st.number_input("Quantity", min_value=0.0, step=0.1)
-    t_price = st.number_input("Price Paid ($)", min_value=0.0, step=0.01)
-    submitted = st.form_submit_button("Save to Cloud")
-
-if submitted and selected_result:
-    ticker = selected_result.split(" ")[0]
-    existing_df = load_data()
-    
-    new_entry = pd.DataFrame([{
-        "Date": str(t_date), "Ticker": ticker, "Type": t_type,
-        "Qty": t_qty, "Price": t_price, "Platform": t_platform.strip() or "Direct"
-    }])
-    
-    # Push updated list back to Google Sheets
-    updated_df = pd.concat([existing_df, new_entry], ignore_index=True)
-    conn.update(data=updated_df)
-    st.sidebar.success(f"Successfully saved {ticker}!")
-    st.rerun()
-
-# --- 5. REAL-TIME CALCULATIONS & DASHBOARD ---
+# --- 3. DATA PROCESSING ---
 df = load_data()
 
 if not df.empty:
-    # Clean numeric data for math
     df["Qty"] = pd.to_numeric(df["Qty"], errors='coerce')
     df["Price"] = pd.to_numeric(df["Price"], errors='coerce')
+    df["Date"] = pd.to_datetime(df["Date"]) # Ensure dates are usable for charts
 
-    summary_list = []
-    port_val, port_pnl = 0.0, 0.0
+    active_positions = []
+    realized_trades = []
+    total_market_val, total_unrealized_pnl, total_realized_profit = 0.0, 0.0, 0.0
 
     for ticker in df['Ticker'].unique():
         t_df = df[df['Ticker'] == ticker]
-        
         buys = t_df[t_df['Type'] == 'Buy']
         sells = t_df[t_df['Type'] == 'Sell']
+        
         net_qty = buys['Qty'].sum() - sells['Qty'].sum()
+        
+        # --- REALIZED LOGIC ---
+        if not sells.empty:
+            avg_buy_price = (buys['Qty'] * buys['Price']).sum() / buys['Qty'].sum()
+            for _, sell_row in sells.iterrows():
+                profit = (sell_row['Price'] - avg_buy_price) * sell_row['Qty']
+                total_realized_profit += profit
+                realized_trades.append({
+                    "Date": sell_row['Date'],
+                    "Ticker": ticker,
+                    "Profit": profit
+                })
 
+        # --- UNREALIZED LOGIC ---
         if net_qty > 0:
-            # Weighted average cost math
             avg_cost = (buys['Qty'] * buys['Price']).sum() / buys['Qty'].sum()
-            
-            # Fetch live price from Yahoo
             try:
                 live_price = yf.Ticker(ticker).fast_info['last_price']
             except:
                 live_price = avg_cost
             
-            mkt_val = net_qty * live_price
-            pnl = mkt_val - (net_qty * avg_cost)
-            
-            port_val += mkt_val
-            port_pnl += pnl
+            cur_val = net_qty * live_price
+            un_pnl = cur_val - (net_qty * avg_cost)
+            total_market_val += cur_val
+            total_unrealized_pnl += un_pnl
 
-            summary_list.append({
-                "Ticker": ticker, "Shares": net_qty,
-                "Avg Cost": f"${avg_cost:.2f}", "Live": f"${live_price:.2f}",
-                "Value": f"${mkt_val:,.2f}", "P/L": f"${pnl:,.2f}"
+            active_positions.append({
+                "Ticker": ticker, "Shares": net_qty, "Avg Cost": avg_cost,
+                "Live": live_price, "Value": cur_val, "P/L": un_pnl
             })
 
-    # Portfolio Metrics
-    c1, c2 = st.columns(2)
-    c1.metric("Total Portfolio Value", f"${port_val:,.2f}")
-    c2.metric("Total Unrealized P/L", f"${port_pnl:,.2f}", delta=f"${port_pnl:,.2f}")
+    # --- 4. TOP METRICS (WITH AUTO-COLOR) ---
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Current Value", f"${total_market_val:,.2f}")
+    c2.metric("Unrealized P/L", f"${total_unrealized_pnl:,.2f}", delta=f"${total_unrealized_pnl:,.2f}")
+    c3.metric("Total Realized", f"${total_realized_profit:,.2f}", delta=f"${total_realized_profit:,.2f}")
 
-    st.table(pd.DataFrame(summary_list))
+    # --- 5. PROFIT OVER TIME CHART ---
+    if realized_trades:
+        st.subheader("💰 Realized Profit Growth")
+        chart_df = pd.DataFrame(realized_trades).sort_values("Date")
+        chart_df["Cumulative Profit"] = chart_df["Profit"].cumsum()
+        st.area_chart(data=chart_df, x="Date", y="Cumulative Profit")
+
+    # --- 6. TABLES ---
+    st.subheader("📋 Active Positions")
+    if active_positions:
+        active_df = pd.DataFrame(active_positions)
+        # Apply color based on P/L column
+        st.table(active_df.style.applymap(lambda x: 'color: green' if x > 0 else 'color: red', subset=['P/L'])
+                 .format({"Avg Cost": "${:.2f}", "Live": "${:.2f}", "Value": "${:,.2f}", "P/L": "${:,.2f}"}))
 else:
-    st.info("No trades found. Use the sidebar to add your first stock!")
+    st.info("No trades found. Add some in the sidebar!")
