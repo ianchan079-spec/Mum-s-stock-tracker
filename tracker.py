@@ -134,7 +134,7 @@ if not df.empty:
             "Value": cur_val,
             "P/L": un_pnl
         })
-            })
+        
 
     # --- 6. DASHBOARD DISPLAY ---
     c1, c2, c3 = st.columns(3)
