@@ -8,6 +8,13 @@ import requests
 from datetime import date
 from typing import List
 
+@st.cache_data(ttl="1d") # Only look up names once a day to keep it fast
+def get_company_name(ticker):
+    try:
+        return yf.Ticker(ticker).info.get('longName', ticker)
+    except:
+        return ticker
+    
 # --- 1. HEARTBEAT & CONFIG ---
 # Automatically refreshes the app every 60 seconds to update live prices
 st_autorefresh(interval=60000, key="pricerefresh")
@@ -74,7 +81,7 @@ if submitted:
         conn.update(data=updated_df)
         st.sidebar.success(f"Saved {ticker}!")
         st.rerun()
-        
+
 # --- 5. DATA PROCESSING & CALCULATIONS ---
 df = load_data()
 
@@ -103,7 +110,11 @@ if not df.empty:
 
         # Active (Unrealized) Position Logic
         if net_qty > 0:
-            avg_cost = (buys['Qty'] * buys['Price']).sum() / buys['Qty'].sum()
+        avg_cost = (buys['Qty'] * buys['Price']).sum() / buys['Qty'].sum()
+        
+        # 1. Fetch Company Name (New)
+        name = get_company_name(ticker)
+
             try:
                 live_price = yf.Ticker(ticker).fast_info['last_price']
             except:
@@ -115,8 +126,14 @@ if not df.empty:
             total_unrealized_pnl += un_pnl
 
             active_positions.append({
-                "Ticker": ticker, "Shares": net_qty, "Avg Cost": avg_cost,
-                "Live": live_price, "Value": cur_val, "P/L": un_pnl
+            "Ticker": ticker,
+            "Company": name, # New Column added here
+            "Shares": net_qty,
+            "Avg Cost": avg_cost,
+            "Live": live_price,
+            "Value": cur_val,
+            "P/L": un_pnl
+        })
             })
 
     # --- 6. DASHBOARD DISPLAY ---
