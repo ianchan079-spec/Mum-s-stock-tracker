@@ -110,7 +110,7 @@ if not df.empty:
 
         # Active (Unrealized) Position Logic
         if net_qty > 0:
-        avg_cost = (buys['Qty'] * buys['Price']).sum() / buys['Qty'].sum()
+            avg_cost = (buys['Qty'] * buys['Price']).sum() / buys['Qty'].sum()
         
         # 1. Fetch Company Name (New)
         name = get_company_name(ticker)
