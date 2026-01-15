@@ -36,32 +36,45 @@ def search_stocks(search_term: str) -> List[str]:
     except Exception:
         return []
 
-# --- 4. SIDEBAR: KEYING IN TRADES (RESTORED) ---
+# --- 4. SIDEBAR: KEYING IN TRADES (FIXED FOR LIVE SEARCH) ---
 st.sidebar.header("➕ Add New Trade")
+
+# 1. Search Box is OUTSIDE the form so it is "Live"
+selected_result = st_searchbox(
+    search_stocks, 
+    key="ticker_search", 
+    label="1. Search Company/Ticker"
+)
+
+# 2. The rest of the details are INSIDE the form
 with st.sidebar.form("input_form", clear_on_submit=True):
-    selected_result = st_searchbox(search_stocks, key="ticker_search", label="Search Company/Ticker")
+    st.write("2. Enter Trade Details")
     t_date = st.date_input("Trade Date", date.today())
     t_type = st.selectbox("Type", ["Buy", "Sell"])
     t_platform = st.text_input("Platform", placeholder="e.g. Robinhood")
     t_qty = st.number_input("Quantity", min_value=0.0, step=0.1)
     t_price = st.number_input("Price Paid ($)", min_value=0.0, step=0.01)
+    
     submitted = st.form_submit_button("Save to Cloud")
 
-if submitted and selected_result:
-    ticker = selected_result.split(" ")[0]
-    existing_df = load_data()
-    
-    new_entry = pd.DataFrame([{
-        "Date": str(t_date), "Ticker": ticker, "Type": t_type,
-        "Qty": t_qty, "Price": t_price, "Platform": t_platform.strip() or "Direct"
-    }])
-    
-    # Save back to Google Sheets
-    updated_df = pd.concat([existing_df, new_entry], ignore_index=True)
-    conn.update(data=updated_df)
-    st.sidebar.success(f"Saved {ticker}!")
-    st.rerun()
-
+# 3. Final Check: Only save if both the search result and the button are clicked
+if submitted:
+    if not selected_result:
+        st.sidebar.error("Please select a ticker from the search results first!")
+    else:
+        ticker = selected_result.split(" ")[0]
+        existing_df = load_data()
+        
+        new_entry = pd.DataFrame([{
+            "Date": str(t_date), "Ticker": ticker, "Type": t_type,
+            "Qty": t_qty, "Price": t_price, "Platform": t_platform.strip() or "Direct"
+        }])
+        
+        updated_df = pd.concat([existing_df, new_entry], ignore_index=True)
+        conn.update(data=updated_df)
+        st.sidebar.success(f"Saved {ticker}!")
+        st.rerun()
+        
 # --- 5. DATA PROCESSING & CALCULATIONS ---
 df = load_data()
 
